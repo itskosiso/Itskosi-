@@ -1,0 +1,186 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Send, User, Bot, X, RefreshCw, Sparkles } from 'lucide-react';
+import { GoogleGenAI } from "@google/genai";
+import ReactMarkdown from 'react-markdown';
+import { format } from 'date-fns';
+import { cn } from '../lib/utils';
+
+interface Message {
+  role: 'user' | 'bot';
+  content: string;
+  timestamp: Date;
+}
+
+export function Jtbot({ onClose }: { onClose: () => void }) {
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      role: 'bot',
+      content: "Hello! I'm Jtbot, your Verse assistant. How can I help you learn about Crypto today?",
+      timestamp: new Date()
+    }
+  ]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  const handleSend = async () => {
+    if (!input.trim() || isLoading) return;
+
+    const userMessage: Message = {
+      role: 'user',
+      content: input,
+      timestamp: new Date()
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setInput('');
+    setIsLoading(true);
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: input,
+        config: {
+          systemInstruction: "You are Jtbot, a friendly and knowledgeable AI assistant for a crypto learning app called Verse. Your goal is to help users understand blockchain, cryptocurrency, and Web3 concepts in a simple, engaging way. Keep responses concise and use markdown for formatting. If asked about the app, explain that Verse is a platform to learn and earn crypto rewards.",
+        }
+      });
+
+      const botMessage: Message = {
+        role: 'bot',
+        content: response.text || "I'm sorry, I couldn't process that. Please try again.",
+        timestamp: new Date()
+      };
+
+      setMessages(prev => [...prev, botMessage]);
+    } catch (error) {
+      console.error("Jtbot Error:", error);
+      setMessages(prev => [...prev, {
+        role: 'bot',
+        content: "Oops! I'm having some trouble connecting right now. Please check your internet or try again later.",
+        timestamp: new Date()
+      }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 20 }}
+      className="fixed inset-0 z-[100] bg-[#0a0a0a] flex flex-col max-w-md mx-auto shadow-2xl"
+    >
+      {/* Header */}
+      <div className="p-4 border-b border-white/10 flex items-center justify-between bg-nav-bg">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-primary-button/20 flex items-center justify-center text-primary-button">
+            <Bot size={24} />
+          </div>
+          <div>
+            <h2 className="font-bold text-lg">Jtbot</h2>
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
+              <span className="text-xs text-text-secondary">Online</span>
+            </div>
+          </div>
+        </div>
+        <button 
+          onClick={onClose}
+          className="p-2 hover:bg-white/10 rounded-full transition-colors"
+        >
+          <X size={20} />
+        </button>
+      </div>
+
+      {/* Messages */}
+      <div 
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto p-4 space-y-4 scroll-smooth"
+      >
+        {messages.map((msg, idx) => (
+          <motion.div
+            key={idx}
+            initial={{ opacity: 0, x: msg.role === 'user' ? 20 : -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className={cn(
+              "flex gap-3 max-w-[85%]",
+              msg.role === 'user' ? "ml-auto flex-row-reverse" : "mr-auto"
+            )}
+          >
+            <div className={cn(
+              "w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0",
+              msg.role === 'user' ? "bg-primary-button" : "bg-white/10"
+            )}>
+              {msg.role === 'user' ? <User size={16} /> : <Bot size={16} />}
+            </div>
+            <div className={cn(
+              "p-3 rounded-2xl text-sm leading-relaxed",
+              msg.role === 'user' 
+                ? "bg-primary-button text-white rounded-tr-none" 
+                : "bg-white/5 border border-white/10 rounded-tl-none"
+            )}>
+              <div className="markdown-body prose prose-invert prose-sm max-w-none">
+                <ReactMarkdown>{msg.content}</ReactMarkdown>
+              </div>
+              <span className="text-[10px] opacity-40 mt-1 block">
+                {format(msg.timestamp, 'HH:mm')}
+              </span>
+            </div>
+          </motion.div>
+        ))}
+        {isLoading && (
+          <div className="flex gap-3 max-w-[85%] mr-auto">
+            <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center">
+              <RefreshCw size={16} className="animate-spin text-primary-button" />
+            </div>
+            <div className="p-3 rounded-2xl bg-white/5 border border-white/10 rounded-tl-none">
+              <div className="flex gap-1">
+                <div className="w-1.5 h-1.5 bg-primary-button rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <div className="w-1.5 h-1.5 bg-primary-button rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <div className="w-1.5 h-1.5 bg-primary-button rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Input */}
+      <div className="p-4 border-t border-white/10 bg-nav-bg">
+        <div className="relative flex items-center gap-2">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+            placeholder="Ask Jtbot anything..."
+            className="flex-1 bg-white/5 border border-white/10 rounded-xl py-3 px-4 pr-12 focus:outline-none focus:border-primary-button/50 transition-colors text-sm"
+          />
+          <button
+            onClick={handleSend}
+            disabled={!input.trim() || isLoading}
+            className={cn(
+              "absolute right-2 p-2 rounded-lg transition-all",
+              input.trim() && !isLoading 
+                ? "text-primary-button hover:bg-primary-button/10" 
+                : "text-text-secondary opacity-50"
+            )}
+          >
+            <Send size={20} />
+          </button>
+        </div>
+        <p className="text-[10px] text-center text-text-secondary mt-3 flex items-center justify-center gap-1">
+          <Sparkles size={10} /> Powered by Verse AI
+        </p>
+      </div>
+    </motion.div>
+  );
+}

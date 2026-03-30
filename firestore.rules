@@ -42,12 +42,6 @@ service cloud.firestore {
              data.lastActive is string;
     }
 
-    match /presence/{sessionId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
-    }
-
     function isAdmin() {
       return isAuthenticated() &&
         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
@@ -68,17 +62,6 @@ service cloud.firestore {
       
       // No one can delete profiles except admins
       allow delete: if isAdmin();
-    }
-
-    match /stats/global {
-      allow read: if isAuthenticated();
-      // In a real app, updates would be done via Cloud Functions or strictly validated
-      allow write: if isAuthenticated();
-    }
-
-    match /dailyStats/{dateStr} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
     }
 
     // Default deny

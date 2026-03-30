@@ -54,22 +54,6 @@ export interface RankInfo {
   color: string;
 }
 
-export interface GlobalStats {
-  totalUsers: number;
-  totalEvents: number;
-  activeNodes: number;
-  rankDistribution: Record<string, number>;
-  totalSpins?: number;
-  pointsSpentOnSpins?: number;
-  jackpotRewards?: number;
-}
-
-export interface DailyStats {
-  date: string;
-  visits: number;
-  activeUsers: number;
-}
-
 export const RANK_LIST: RankInfo[] = [
   { name: 'Novice', minPoints: 0, badge: '🌱', color: '#94A3B8' },
   { name: 'Beginner', minPoints: 100, badge: '🔰', color: '#22C55E' },

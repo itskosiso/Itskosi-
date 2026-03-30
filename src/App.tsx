@@ -20,31 +20,30 @@ import {
   LogOut,
   Share2,
   BarChart2,
-  TrendingUp,
-  Activity,
-  Layout,
   Camera,
-  Upload,
-  Globe,
   RefreshCw,
   RotateCw,
   Zap,
   Users,
   Laptop,
+  Layout,
   Sun,
   Moon,
   Send,
   Twitter,
+  Bot,
+  Sparkles,
   Link as LinkIcon
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { format, isSameDay, subDays, startOfWeek, addDays, isAfter } from 'date-fns';
+import { format, subDays } from 'date-fns';
 import confetti from 'canvas-confetti';
 import { cn } from './lib/utils';
-import { UserProgress, Question, Lesson, getRank, RANK_LIST, getRankInfo, GlobalStats, DailyStats } from './types';
+import { UserProgress, Question, Lesson, getRank, RANK_LIST, getRankInfo } from './types';
 import { LESSONS, QUIZ_POOL } from './data';
 import { SpinWheel } from './components/SpinWheel';
 import { MemoryGame } from './components/MemoryGame';
+import { Jtbot } from './components/Jtbot';
 import { 
   auth, 
   db, 
@@ -75,7 +74,7 @@ import {
   serverTimestamp
 } from 'firebase/firestore';
 
-type Screen = 'home' | 'learn' | 'tasks' | 'leaderboard' | 'profile' | 'lesson-detail' | 'quiz' | 'reward' | 'analytics' | 'signup' | 'spin' | 'memory-game';
+type Screen = 'home' | 'learn' | 'tasks' | 'leaderboard' | 'profile' | 'lesson-detail' | 'quiz' | 'reward' | 'signup' | 'spin' | 'memory-game' | 'jtbot';
 
 const INITIAL_PROGRESS: UserProgress = {
   userId: Math.random().toString(36).substring(2, 11),
@@ -225,83 +224,6 @@ export default function App() {
   const [quizAnswers, setQuizAnswers] = useState<Record<string, string>>({});
   const [quizResult, setQuizResult] = useState<{ points: number; rank: string } | null>(null);
   const [globalUsers, setGlobalUsers] = useState<UserProgress[]>([]);
-  const [globalStats, setGlobalStats] = useState<GlobalStats | null>(null);
-  const [dailyStats, setDailyStats] = useState<DailyStats[]>([]);
-  const [activeUsersCount, setActiveUsersCount] = useState(0);
-  const [activeNodesCount, setActiveNodesCount] = useState(0);
-
-  // Presence and Real-time Analytics Logic
-  useEffect(() => {
-    if (!isAuthReady || !firebaseUser || !db) return;
-
-    // Use a unique session ID for each tab/device
-    const sessionId = Math.random().toString(36).substring(2, 15);
-    const presenceRef = doc(db, 'presence', sessionId);
-
-    const updatePresence = async () => {
-      try {
-        await setDoc(presenceRef, {
-          userId: firebaseUser.uid,
-          lastSeen: serverTimestamp(),
-          sessionId: sessionId
-        }, { merge: true });
-      } catch (error) {
-        console.error('Error updating presence:', error);
-      }
-    };
-
-    // Initial presence
-    updatePresence();
-
-    // Heartbeat every 1 minute
-    const interval = setInterval(updatePresence, 60000);
-
-    // Cleanup on disconnect/unmount
-    const cleanup = async () => {
-      try {
-        await deleteDoc(presenceRef);
-      } catch (error) {
-        console.error('Error deleting presence:', error);
-      }
-    };
-
-    window.addEventListener('beforeunload', cleanup);
-
-    // Real-time listener for Active Users and Active Nodes
-    const q = query(collection(db, 'presence'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const now = Date.now();
-      const fiveMinsAgo = now - 5 * 60000;
-
-      const activeSessions = snapshot.docs.map(doc => {
-        const data = doc.data() as { userId: string; lastSeen: any };
-        // Handle serverTimestamp being null initially
-        const lastSeen = data.lastSeen?.toMillis?.() || now;
-        return { userId: data.userId, lastSeen };
-      });
-      
-      // Active Nodes = total currently connected sessions
-      setActiveNodesCount(activeSessions.length);
-
-      // Active Users = unique users active in last 5 mins
-      const recentUsers = new Set(
-        activeSessions
-          .filter(s => s.lastSeen > fiveMinsAgo)
-          .map(s => s.userId)
-      );
-      setActiveUsersCount(recentUsers.size);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'presence');
-    });
-
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener('beforeunload', cleanup);
-      unsubscribe();
-      cleanup();
-    };
-  }, [isAuthReady, firebaseUser, db]);
-
   // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (fUser) => {
@@ -394,61 +316,12 @@ export default function App() {
       handleFirestoreError(error, OperationType.LIST, 'users');
     });
 
-    // Global Stats Listener
-    const statsUnsubscribe = onSnapshot(doc(db, 'stats', 'global'), (doc) => {
-      if (doc.exists()) {
-        setGlobalStats(doc.data() as GlobalStats);
-      }
-    });
-
-    // Daily Stats Listener (Last 14 days to ensure full week coverage)
-    const dailyQ = query(
-      collection(db, 'dailyStats'),
-      orderBy('date', 'desc'),
-      limit(14)
-    );
-    const dailyUnsubscribe = onSnapshot(dailyQ, (snapshot) => {
-      const stats = snapshot.docs.map(doc => doc.data() as DailyStats).reverse();
-      setDailyStats(stats);
-    });
-
     return () => {
       unsubscribe();
-      statsUnsubscribe();
-      dailyUnsubscribe();
     };
   }, [isAuthReady, refreshKey, firebaseUser]);
 
-  const syncGlobalStats = useCallback(async () => {
-    if (!db) return;
-    try {
-      const usersCollection = collection(db, 'users');
-      const totalSnapshot = await getCountFromServer(usersCollection);
-      const totalCount = totalSnapshot.data().count;
-
-      const todayStart = new Date();
-      todayStart.setUTCHours(0, 0, 0, 0);
-      const activeTodayQuery = query(usersCollection, where('lastActive', '>=', todayStart.toISOString()));
-      const activeTodaySnapshot = await getCountFromServer(activeTodayQuery);
-      const activeTodayCount = activeTodaySnapshot.data().count;
-
-      const distribution: Record<string, number> = {};
-      await Promise.all(RANK_LIST.map(async (rank) => {
-        const rankQuery = query(usersCollection, where('rank', '==', rank.name));
-        const rankSnapshot = await getCountFromServer(rankQuery);
-        distribution[rank.name] = rankSnapshot.data().count;
-      }));
-
-      await setDoc(doc(db, 'stats', 'global'), {
-        totalUsers: totalCount,
-        rankDistribution: distribution
-      }, { merge: true });
-    } catch (error) {
-      console.error('Sync Global Stats Error:', error);
-    }
-  }, [db]);
-
-  // Analytics Tracking
+  // User Visit & Streak Tracking
   useEffect(() => {
     if (!isAuthReady || !firebaseUser) return;
 
@@ -459,10 +332,7 @@ export default function App() {
       const visitKey = `visit_${today}`;
       const hasVisited = localStorage.getItem(visitKey);
 
-      // Force sync if global stats are missing or empty
-      const statsMissing = !globalStats || !globalStats.rankDistribution || Object.values(globalStats.rankDistribution).reduce((a, b) => a + b, 0) === 0;
-
-      if (!hasVisited || statsMissing) {
+      if (!hasVisited) {
         try {
           // Streak Logic
           const lastVisit = user.lastVisitDate || '';
@@ -485,33 +355,15 @@ export default function App() {
           setUser(updatedUser);
           await syncUserToFirestore(updatedUser);
 
-          await syncGlobalStats();
-
-          // Increment daily stats
-          await setDoc(doc(db, 'dailyStats', today), {
-            date: today,
-            visits: increment(1)
-          }, { merge: true });
-
           localStorage.setItem(visitKey, 'true');
         } catch (error) {
-          console.error('Analytics Error:', error);
+          console.error('Streak Update Error:', error);
         }
       }
     };
 
     trackVisit();
-  }, [isAuthReady, firebaseUser, globalStats, syncGlobalStats]); // Added globalStats and syncGlobalStats to dependencies
-
-  const trackEvent = async () => {
-    try {
-      await setDoc(doc(db, 'stats', 'global'), {
-        totalEvents: increment(1)
-      }, { merge: true });
-    } catch (error) {
-      console.error('Error tracking event:', error);
-    }
-  };
+  }, [isAuthReady, firebaseUser]);
 
   // Sync User Progress to Firestore
   const syncUserToFirestore = async (updatedUser: UserProgress) => {
@@ -685,7 +537,6 @@ export default function App() {
 
     setUser(updatedUser);
     await syncUserToFirestore(updatedUser);
-    await trackEvent();
 
     if (pointsEarned > 0 && oldRank !== newRank) {
       try {
@@ -715,7 +566,6 @@ export default function App() {
     };
     setUser(updatedUser);
     await syncUserToFirestore(updatedUser);
-    await trackEvent();
 
     if (oldRank !== newRank) {
       try {
@@ -760,7 +610,6 @@ export default function App() {
 
     setUser(updatedUser);
     await syncUserToFirestore(updatedUser);
-    await trackEvent();
 
     // Update global stats
     try {
@@ -803,7 +652,6 @@ export default function App() {
 
     setUser(updatedUser);
     await syncUserToFirestore(updatedUser);
-    await trackEvent();
 
     if (oldRank !== newRank) {
       try {
@@ -852,7 +700,6 @@ export default function App() {
     };
     setUser(updatedUser);
     await syncUserToFirestore(updatedUser);
-    await trackEvent();
 
     if (oldRank !== newRank) {
       try {
@@ -888,9 +735,9 @@ export default function App() {
     
     switch (activeScreen) {
       case 'signup': return <SignupScreen onSignup={handleSignup} firebaseUser={firebaseUser} />;
-      case 'home': return <HomeScreen user={user} onNavigate={setActiveScreen} onStartLesson={(l) => { setSelectedLesson(l); setActiveScreen('lesson-detail'); }} onStartQuiz={startQuiz} onShowAnalytics={() => setActiveScreen('analytics')} onCheckin={handleCheckin} />;
+      case 'home': return <HomeScreen user={user} onNavigate={setActiveScreen} onStartLesson={(l) => { setSelectedLesson(l); setActiveScreen('lesson-detail'); }} onStartQuiz={startQuiz} onCheckin={handleCheckin} />;
       case 'learn': return <LearnScreen user={user} onSelectLesson={(l) => { setSelectedLesson(l); setActiveScreen('lesson-detail'); }} />;
-      case 'tasks': return <TasksScreen user={user} onStartQuiz={startQuiz} onStartLesson={(l) => { setSelectedLesson(l); setActiveScreen('lesson-detail'); }} onCheckin={handleCheckin} selectedCategory={selectedQuizCategory} onSelectCategory={setSelectedQuizCategory} />;
+      case 'tasks': return <TasksScreen user={user} onNavigate={setActiveScreen} onStartQuiz={startQuiz} onStartLesson={(l) => { setSelectedLesson(l); setActiveScreen('lesson-detail'); }} onCheckin={handleCheckin} selectedCategory={selectedQuizCategory} onSelectCategory={setSelectedQuizCategory} />;
       case 'leaderboard': return <LeaderboardScreen user={user} globalUsers={globalUsers} onRefresh={handleRefreshLeaderboard} />;
       case 'profile': return <ProfileScreen user={user} theme={theme} onToggleTheme={toggleTheme} onUpdateProfile={handleUpdateProfile} onReset={handleReset} />;
       case 'spin': return <SpinWheel user={user} onSpin={handleSpin} onBack={() => setActiveScreen('home')} />;
@@ -898,8 +745,8 @@ export default function App() {
       case 'lesson-detail': return selectedLesson ? <LessonDetail lesson={selectedLesson} user={user} onBack={() => setActiveScreen('learn')} onComplete={() => handleLessonComplete(selectedLesson)} /> : null;
       case 'quiz': return <QuizScreen questions={quizQuestions} currentIndex={currentQuizIndex} onComplete={handleQuizComplete} onNext={() => setCurrentQuizIndex(prev => prev + 1)} />;
       case 'reward': return quizResult ? <RewardScreen result={quizResult} onHome={() => setActiveScreen('home')} onLearn={() => setActiveScreen('learn')} /> : null;
-      case 'analytics': return <AnalyticsScreen globalStats={globalStats} dailyStats={dailyStats} activeUsersCount={activeUsersCount} activeNodesCount={activeNodesCount} onBack={() => setActiveScreen('home')} onRefresh={syncGlobalStats} />;
-      default: return <HomeScreen user={user} onNavigate={setActiveScreen} onStartLesson={(l) => { setSelectedLesson(l); setActiveScreen('lesson-detail'); }} onStartQuiz={startQuiz} onShowAnalytics={() => setActiveScreen('analytics')} onCheckin={handleCheckin} />;
+      case 'jtbot': return <Jtbot onClose={() => setActiveScreen('home')} />;
+      default: return <HomeScreen user={user} onNavigate={setActiveScreen} onStartLesson={(l) => { setSelectedLesson(l); setActiveScreen('lesson-detail'); }} onStartQuiz={startQuiz} onCheckin={handleCheckin} />;
     }
   };
 
@@ -1130,7 +977,7 @@ function NavItem({ icon, label, active, onClick }: { icon: React.ReactNode, labe
 
 // --- Screens ---
 
-function HomeScreen({ user, onNavigate, onStartLesson, onStartQuiz, onShowAnalytics, onCheckin }: { user: UserProgress, onNavigate: (s: Screen) => void, onStartLesson: (l: Lesson) => void, onStartQuiz: () => void, onShowAnalytics: () => void, onCheckin: () => Promise<boolean> }) {
+function HomeScreen({ user, onNavigate, onStartLesson, onStartQuiz, onCheckin }: { user: UserProgress, onNavigate: (s: Screen) => void, onStartLesson: (l: Lesson) => void, onStartQuiz: () => void, onCheckin: () => Promise<boolean> }) {
   const lastLesson = LESSONS.find(l => l.id === user.lastLessonId) || LESSONS[0];
   const today = new Date().toISOString().split('T')[0];
   const hasCheckedIn = user.lastCheckinDate === today;
@@ -1154,9 +1001,15 @@ function HomeScreen({ user, onNavigate, onStartLesson, onStartQuiz, onShowAnalyt
           </div>
         </div>
         <div className="flex gap-2">
-          <button onClick={onShowAnalytics} className="p-2 glass-card rounded-full text-accent-glow">
-            <BarChart2 size={20} />
-          </button>
+          <a 
+            href="https://analytics.vgdh.io/ais-dev-mtao22uhakl43gqciwgblb-182504716269.europe-west3.run.app" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-full glass-card border-verse-start/30 border text-primary-button hover:bg-primary-button/10 transition-colors shadow-lg"
+          >
+            <BarChart2 size={16} />
+            <span className="text-[10px] font-bold uppercase tracking-widest">Analytics</span>
+          </a>
           <button onClick={() => onNavigate('profile')} className="w-10 h-10 rounded-full glass-card p-0.5 overflow-hidden border-verse-start/30 border">
             {user.profilePicture ? (
               <img src={user.profilePicture} alt="Profile" className="w-full h-full rounded-full object-cover" referrerPolicy="no-referrer" />
@@ -1412,6 +1265,17 @@ function HomeScreen({ user, onNavigate, onStartLesson, onStartQuiz, onShowAnalyt
           </div>
         </div>
       </section>
+
+      {/* Jtbot FAB */}
+      <motion.button
+        whileHover={{ scale: 1.1 }}
+        whileTap={{ scale: 0.9 }}
+        onClick={() => onNavigate('jtbot')}
+        className="fixed bottom-24 right-6 w-14 h-14 bg-primary-button rounded-full shadow-2xl flex items-center justify-center text-white z-40 glow-border"
+      >
+        <Bot size={28} />
+        <div className="absolute -top-1 -right-1 w-4 h-4 bg-success rounded-full border-2 border-background-deep animate-pulse" />
+      </motion.button>
     </div>
   );
 }
@@ -1428,6 +1292,15 @@ function LearnScreen({ user, onSelectLesson }: { user: UserProgress, onSelectLes
             <p className="text-text-secondary text-[10px] uppercase tracking-widest font-medium">Learning Path</p>
           </div>
         </div>
+        <a 
+          href="https://analytics.vgdh.io/ais-dev-mtao22uhakl43gqciwgblb-182504716269.europe-west3.run.app" 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-full glass-card border-verse-start/30 border text-primary-button hover:bg-primary-button/10 transition-colors shadow-lg"
+        >
+          <BarChart2 size={16} />
+          <span className="text-[10px] font-bold uppercase tracking-widest">Analytics</span>
+        </a>
       </header>
 
       <div className="space-y-4">
@@ -1513,7 +1386,7 @@ function LessonDetail({ lesson, user, onBack, onComplete }: { lesson: Lesson, us
   );
 }
 
-function TasksScreen({ user, onStartQuiz, onStartLesson, onCheckin, selectedCategory, onSelectCategory }: { user: UserProgress, onStartQuiz: (cat?: string) => void, onStartLesson: (l: Lesson) => void, onCheckin: () => Promise<boolean>, selectedCategory: string, onSelectCategory: (cat: string) => void }) {
+function TasksScreen({ user, onNavigate, onStartQuiz, onStartLesson, onCheckin, selectedCategory, onSelectCategory }: { user: UserProgress, onNavigate: (s: Screen) => void, onStartQuiz: (cat?: string) => void, onStartLesson: (l: Lesson) => void, onCheckin: () => Promise<boolean>, selectedCategory: string, onSelectCategory: (cat: string) => void }) {
   const incompleteLesson = LESSONS.find(l => !user.completedLessons.includes(l.id));
   const today = new Date().toISOString().split('T')[0];
   const hasCheckedIn = user.lastCheckinDate === today;
@@ -1533,6 +1406,15 @@ function TasksScreen({ user, onStartQuiz, onStartLesson, onCheckin, selectedCate
             <p className="text-text-secondary text-[10px] uppercase tracking-widest font-medium">Tasks</p>
           </div>
         </div>
+        <a 
+          href="https://analytics.vgdh.io/ais-dev-mtao22uhakl43gqciwgblb-182504716269.europe-west3.run.app" 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-full glass-card border-verse-start/30 border text-primary-button hover:bg-primary-button/10 transition-colors shadow-lg"
+        >
+          <BarChart2 size={16} />
+          <span className="text-[10px] font-bold uppercase tracking-widest">Analytics</span>
+        </a>
       </header>
 
       <div className="space-y-4">
@@ -1635,7 +1517,39 @@ function TasksScreen({ user, onStartQuiz, onStartLesson, onCheckin, selectedCate
             {hasTakenQuiz ? 'Quiz Completed Today' : 'Start Quiz'}
           </button>
         </div>
+
+        <div className="glass-card p-5 space-y-4 border-primary-button/20 bg-primary-button/5">
+          <div className="flex justify-between items-start">
+            <div className="flex gap-3">
+              <div className="p-2 bg-primary-button/20 rounded-lg text-primary-button">
+                <Bot size={24} />
+              </div>
+              <div>
+                <h3 className="font-bold">Ask Jtbot</h3>
+                <p className="text-xs text-text-secondary">Get help from our AI assistant</p>
+              </div>
+            </div>
+            <Sparkles size={16} className="text-primary-button animate-pulse" />
+          </div>
+          <button 
+            onClick={() => onNavigate('jtbot')} 
+            className="w-full btn-primary py-2"
+          >
+            Chat with Jtbot
+          </button>
+        </div>
       </div>
+
+      {/* Jtbot FAB */}
+      <motion.button
+        whileHover={{ scale: 1.1 }}
+        whileTap={{ scale: 0.9 }}
+        onClick={() => onNavigate('jtbot')}
+        className="fixed bottom-24 right-6 w-14 h-14 bg-primary-button rounded-full shadow-2xl flex items-center justify-center text-white z-40 glow-border"
+      >
+        <Bot size={28} />
+        <div className="absolute -top-1 -right-1 w-4 h-4 bg-success rounded-full border-2 border-background-deep animate-pulse" />
+      </motion.button>
     </div>
   );
 }
@@ -1915,17 +1829,28 @@ function LeaderboardScreen({ user, globalUsers, onRefresh }: { user: UserProgres
             <p className="text-text-secondary text-[10px] uppercase tracking-widest font-medium">Leaderboard</p>
           </div>
         </div>
-        <button 
-          onClick={handleRefresh}
-          disabled={isRefreshing}
-          className={cn(
-            "text-[10px] font-bold uppercase tracking-[0.15em] text-primary-button hover:text-white transition-colors flex items-center gap-2",
-            isRefreshing && "opacity-50"
-          )}
-        >
-          {isRefreshing && <RefreshCw size={10} className="animate-spin" />}
-          {isRefreshing ? "Refreshing" : "Refresh"}
-        </button>
+        <div className="flex items-center gap-3">
+          <a 
+            href="https://analytics.vgdh.io/ais-dev-mtao22uhakl43gqciwgblb-182504716269.europe-west3.run.app" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-full glass-card border-verse-start/30 border text-primary-button hover:bg-primary-button/10 transition-colors shadow-lg"
+          >
+            <BarChart2 size={16} />
+            <span className="text-[10px] font-bold uppercase tracking-widest">Analytics</span>
+          </a>
+          <button 
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className={cn(
+              "text-[10px] font-bold uppercase tracking-[0.15em] text-primary-button hover:text-white transition-colors flex items-center gap-2",
+              isRefreshing && "opacity-50"
+            )}
+          >
+            {isRefreshing && <RefreshCw size={10} className="animate-spin" />}
+            {isRefreshing ? "Refreshing" : "Refresh"}
+          </button>
+        </div>
       </header>
 
       <div className="space-y-1">
@@ -2033,295 +1958,6 @@ function LeaderboardScreen({ user, globalUsers, onRefresh }: { user: UserProgres
             );
           })
         )}
-      </div>
-    </div>
-  );
-}
-
-function AnalyticsScreen({ globalStats, dailyStats, activeUsersCount, activeNodesCount, onBack, onRefresh }: { globalStats: GlobalStats | null, dailyStats: DailyStats[], activeUsersCount: number, activeNodesCount: number, onBack: () => void, onRefresh: () => Promise<void> }) {
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const [viewMode, setViewMode] = useState<'count' | 'percent'>('count');
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      await onRefresh();
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  const engagementData = useMemo(() => {
-    // Generate the current week (Monday to Sunday)
-    const now = new Date();
-    const startOfCurrentWeek = startOfWeek(now, { weekStartsOn: 1 });
-    const dates = Array.from({ length: 7 }, (_, i) => addDays(startOfCurrentWeek, i));
-    
-    const data = dates.map(date => {
-      const dateStr = format(date, 'yyyy-MM-dd');
-      const stat = dailyStats.find(s => s.date === dateStr);
-      
-      return {
-        day: format(date, 'EEE'),
-        visits: stat?.visits || 0,
-        activeUsers: stat?.activeUsers || 0,
-        date: dateStr,
-        isToday: isSameDay(date, now),
-        isFuture: isAfter(date, now) && !isSameDay(date, now)
-      };
-    });
-    
-    const maxVisits = Math.max(...data.map(s => s.visits), 1);
-    
-    return data.map(item => ({
-      ...item,
-      // Scale bars relative to max visits, with a minimum height for visibility
-      // Future dates have 0 value, past/today have at least 8% height
-      value: item.isFuture ? 0 : (item.visits / maxVisits) * 100,
-    }));
-  }, [dailyStats]);
-
-  const todayStats = dailyStats.find(s => s.date === format(new Date(), 'yyyy-MM-dd'));
-
-  return (
-    <div className="space-y-6 pb-10">
-      <header className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2 text-secondary-end">
-          <BarChart2 size={24} />
-          <h1 className="text-xl font-bold uppercase tracking-tight">Verse Analytics</h1>
-        </div>
-        <button 
-          onClick={handleRefresh}
-          disabled={isRefreshing}
-          className={cn(
-            "p-2 rounded-xl bg-white/5 border border-white/10 text-text-secondary hover:text-white transition-all",
-            isRefreshing && "animate-spin"
-          )}
-          title="Refresh Global Stats"
-        >
-          <RefreshCw size={18} />
-        </button>
-      </header>
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="glass-card p-4 relative overflow-hidden col-span-2">
-          <div className="flex justify-between items-start mb-2">
-            <div className="p-2 bg-secondary-start/20 rounded-lg text-secondary-end">
-              <Users size={20} />
-            </div>
-          </div>
-          <p className="text-4xl font-bold mb-1">{globalStats?.totalUsers || 0}</p>
-          <p className="text-text-secondary text-[10px] uppercase tracking-widest font-bold">Total Registered Users</p>
-        </div>
-
-        <div className="glass-card p-4 relative overflow-hidden">
-          <div className="flex justify-between items-start mb-2">
-            <div className="p-2 bg-success/20 rounded-lg text-success">
-              <Activity size={20} />
-            </div>
-            <div className="flex items-center gap-1 text-success text-[8px] font-bold uppercase">
-              <span className="w-1.5 h-1.5 bg-success rounded-full animate-pulse" />
-              Live
-            </div>
-          </div>
-          <p className="text-2xl font-bold mb-1">{activeUsersCount}</p>
-          <p className="text-text-secondary text-[10px] uppercase tracking-widest font-bold">Active Users (5m)</p>
-        </div>
-
-        <div className="glass-card p-4 relative overflow-hidden">
-          <div className="flex justify-between items-start mb-2">
-            <div className="p-2 bg-purple-500/20 rounded-lg text-purple-400">
-              <Globe size={20} />
-            </div>
-          </div>
-          <p className="text-2xl font-bold mb-1">{activeNodesCount}</p>
-          <p className="text-text-secondary text-[10px] uppercase tracking-widest font-bold">Active Nodes</p>
-        </div>
-
-        <div className="glass-card p-4 relative overflow-hidden col-span-2 space-y-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-2 text-primary-button">
-              <RotateCw size={20} />
-              <h3 className="text-xs font-bold uppercase tracking-widest">Spin Wheel Analytics</h3>
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="text-center">
-              <p className="text-[8px] text-text-secondary uppercase font-bold">Total Spins</p>
-              <p className="text-lg font-bold">{globalStats?.totalSpins || 0}</p>
-            </div>
-            <div className="text-center">
-              <p className="text-[8px] text-text-secondary uppercase font-bold">Points Spent</p>
-              <p className="text-lg font-bold">{globalStats?.pointsSpentOnSpins || 0}</p>
-            </div>
-            <div className="text-center">
-              <p className="text-[8px] text-text-secondary uppercase font-bold">Jackpots</p>
-              <p className="text-lg font-bold">{globalStats?.jackpotRewards || 0}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="glass-card p-4 relative overflow-hidden col-span-2">
-          <div className="flex justify-between items-start mb-2">
-            <div className="p-2 bg-orange-500/20 rounded-lg text-orange-400">
-              <Trophy size={20} />
-            </div>
-          </div>
-          <p className="text-2xl font-bold mb-1">{globalStats?.totalEvents || 0}</p>
-          <p className="text-text-secondary text-[10px] uppercase tracking-widest font-bold">Total Events Participated</p>
-        </div>
-      </div>
-
-      {/* Weekly Engagement Chart */}
-      <div className="glass-card p-6 space-y-8">
-        <div className="flex justify-between items-center">
-          <div className="space-y-1">
-            <p className="text-text-secondary text-xs uppercase tracking-widest font-bold">Weekly Engagement</p>
-            <p className="text-2xl font-bold">Activity Feed</p>
-          </div>
-          <div className="px-3 py-1 bg-white/5 rounded-full border border-white/10">
-            <p className="text-text-secondary text-[10px] uppercase font-bold tracking-wider">Mon - Sun</p>
-          </div>
-        </div>
-
-        {engagementData.length > 0 ? (
-          <div className="relative h-64 flex flex-col justify-end">
-            {/* Grid Lines */}
-            <div className="absolute inset-0 flex flex-col justify-between pointer-events-none py-10 opacity-10">
-              {[0, 1, 2, 3].map((i) => (
-                <div key={i} className="w-full border-t border-white" />
-              ))}
-            </div>
-
-            <div className="flex items-end justify-between h-40 gap-3 relative px-2">
-              {engagementData.map((item, i) => (
-                <div 
-                  key={i} 
-                  className="flex-1 flex flex-col items-center h-full group relative cursor-pointer"
-                  onMouseEnter={() => setHoveredIndex(i)}
-                  onMouseLeave={() => setHoveredIndex(null)}
-                  onClick={() => setHoveredIndex(hoveredIndex === i ? null : i)}
-                >
-                  <AnimatePresence>
-                    {hoveredIndex === i && !item.isFuture && (
-                      <motion.div 
-                        initial={{ opacity: 0, y: 10, scale: 0.9 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 10, scale: 0.9 }}
-                        className="absolute -top-16 left-1/2 -translate-x-1/2 bg-[#1a1a1a] p-3 rounded-2xl shadow-2xl z-20 whitespace-nowrap min-w-[100px] text-center border border-white/10"
-                      >
-                        <p className="text-[10px] font-bold text-white uppercase tracking-wider mb-1">{item.day}</p>
-                        <p className="text-xs text-white/80 font-mono">visits : {item.visits}</p>
-                        {/* Tooltip Arrow */}
-                        <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-[#1a1a1a] rotate-45 border-r border-b border-white/10" />
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                  
-                  <div className="w-full flex-1 flex items-end justify-center px-0.5 sm:px-1">
-                    <motion.div 
-                      initial={{ height: 0 }}
-                      animate={{ height: `${item.isFuture ? 5 : Math.max(12, item.value)}%` }}
-                      transition={{ type: "spring", damping: 20, stiffness: 100 }}
-                      className={cn(
-                        "w-full max-w-[32px] rounded-t-xl transition-all duration-500",
-                        item.isToday 
-                          ? "bg-cyan-500 shadow-[0_0_20px_rgba(0,229,255,0.4)]" 
-                          : item.isFuture
-                            ? "bg-zinc-800 opacity-30"
-                            : "bg-zinc-400 group-hover:bg-zinc-300"
-                      )}
-                    />
-                  </div>
-                  
-                  <span className={cn(
-                    "mt-4 text-[10px] font-bold uppercase tracking-tighter transition-colors",
-                    item.isToday ? "text-cyan-400" : "text-text-secondary"
-                  )}>
-                    {item.day}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="h-48 flex items-center justify-center text-text-secondary text-sm">
-            Insufficient data for weekly chart
-          </div>
-        )}
-      </div>
-
-      {/* Rank Distribution */}
-      <div className="glass-card p-6 space-y-6">
-        <div className="flex justify-between items-center">
-          <div className="space-y-1">
-            <p className="text-text-secondary text-xs uppercase tracking-widest font-bold">Rank Distribution</p>
-            <p className="text-lg font-bold">User Progression</p>
-          </div>
-          <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
-            <button 
-              onClick={() => setViewMode('count')}
-              className={cn(
-                "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all",
-                viewMode === 'count' ? "bg-cyan-500 text-white shadow-lg" : "text-text-secondary hover:text-white"
-              )}
-            >
-              Count
-            </button>
-            <button 
-              onClick={() => setViewMode('percent')}
-              className={cn(
-                "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all",
-                viewMode === 'percent' ? "bg-cyan-500 text-white shadow-lg" : "text-text-secondary hover:text-white"
-              )}
-            >
-              Percent
-            </button>
-          </div>
-        </div>
-
-        <div className="space-y-5">
-          {RANK_LIST.map((rank) => {
-            const count = globalStats?.rankDistribution?.[rank.name] || 0;
-            const total = globalStats?.totalUsers || 1;
-            const percentage = (count / total) * 100;
-            
-            return (
-              <div key={rank.name} className="space-y-2 group cursor-default">
-                <div className="flex justify-between items-end">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">{rank.badge}</span>
-                    <div className="flex flex-col">
-                      <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: rank.color }}>{rank.name}</span>
-                      <span className="text-[8px] text-text-secondary uppercase tracking-tighter font-medium">Min. {rank.minPoints} Points</span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-mono font-bold">
-                      {viewMode === 'count' ? `${count} Users` : `${Math.round(percentage)}%`}
-                    </p>
-                    {viewMode === 'percent' && (
-                      <p className="text-[8px] text-text-secondary font-bold uppercase tracking-tighter">{count} Total</p>
-                    )}
-                  </div>
-                </div>
-                <div className="h-2 bg-white/5 rounded-full overflow-hidden border border-white/5">
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: `${percentage}%` }}
-                    transition={{ type: "spring", damping: 25, stiffness: 120 }}
-                    className="h-full relative"
-                    style={{ backgroundColor: rank.color }}
-                  >
-                    <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent" />
-                  </motion.div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
       </div>
     </div>
   );
