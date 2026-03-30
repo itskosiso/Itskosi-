@@ -45,13 +45,26 @@ export function Jtbot({ onClose }: { onClose: () => void }) {
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
-      const response = await ai.models.generateContent({
+      
+      // Convert messages to the format expected by the Chat API
+      // We skip the first bot message as it's the greeting and not part of the history for the model
+      const history = messages.slice(1).map(msg => ({
+        role: msg.role === 'bot' ? 'model' : 'user',
+        parts: [{ text: msg.content }]
+      }));
+
+      // Remove the last message from history as it's the one we're sending now
+      const chatHistory = history.slice(0, -1);
+
+      const chat = ai.chats.create({
         model: "gemini-3-flash-preview",
-        contents: input,
         config: {
           systemInstruction: "You are Jtbot, a friendly and knowledgeable AI assistant for a crypto learning app called Verse. Your goal is to help users understand blockchain, cryptocurrency, and Web3 concepts in a simple, engaging way. Keep responses concise and use markdown for formatting. If asked about the app, explain that Verse is a platform to learn and earn crypto rewards.",
-        }
+        },
+        history: chatHistory as any
       });
+
+      const response = await chat.sendMessage({ message: input });
 
       const botMessage: Message = {
         role: 'bot',
@@ -60,11 +73,21 @@ export function Jtbot({ onClose }: { onClose: () => void }) {
       };
 
       setMessages(prev => [...prev, botMessage]);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Jtbot Error:", error);
+      
+      let errorMessage = "Oops! I'm having some trouble connecting right now. Please check your internet or try again later.";
+      
+      // Provide more specific feedback if possible
+      if (error.message?.includes('API_KEY_INVALID') || !process.env.GEMINI_API_KEY) {
+        errorMessage = "Jtbot is currently unavailable due to a configuration issue (API Key). Please contact the administrator.";
+      } else if (error.message?.includes('quota')) {
+        errorMessage = "I'm a bit overwhelmed with requests right now. Please try again in a minute!";
+      }
+
       setMessages(prev => [...prev, {
         role: 'bot',
-        content: "Oops! I'm having some trouble connecting right now. Please check your internet or try again later.",
+        content: errorMessage,
         timestamp: new Date()
       }]);
     } finally {
@@ -93,12 +116,29 @@ export function Jtbot({ onClose }: { onClose: () => void }) {
             </div>
           </div>
         </div>
-        <button 
-          onClick={onClose}
-          className="p-2 hover:bg-white/10 rounded-full transition-colors"
-        >
-          <X size={20} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => {
+              setMessages([
+                {
+                  role: 'bot',
+                  content: "Hello! I'm Jtbot, your Verse assistant. How can I help you learn about Crypto today?",
+                  timestamp: new Date()
+                }
+              ]);
+            }}
+            className="p-2 hover:bg-white/10 rounded-full transition-colors text-text-secondary"
+            title="Reset Chat"
+          >
+            <RefreshCw size={20} />
+          </button>
+          <button 
+            onClick={onClose}
+            className="p-2 hover:bg-white/10 rounded-full transition-colors"
+          >
+            <X size={20} />
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
