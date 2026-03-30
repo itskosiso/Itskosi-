@@ -1,0 +1,77 @@
+{
+  "entities": {
+    "UserProgress": {
+      "title": "UserProgress",
+      "description": "Stores the learning progress and leaderboard stats for a user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Unique identifier for the user." },
+        "username": { "type": "string", "description": "Public display name." },
+        "points": { "type": "number", "description": "Total points earned." },
+        "rank": { "type": "string", "description": "Current rank based on points." },
+        "streak": { "type": "number", "description": "Current daily streak." },
+        "badges": { "type": "array", "items": { "type": "string" }, "description": "List of earned badges." },
+        "completedLessons": { "type": "array", "items": { "type": "string" }, "description": "IDs of completed lessons." },
+        "lastActive": { "type": "string", "format": "date-time", "description": "ISO timestamp of last activity." },
+        "progress": { "type": "number", "description": "Percentage of overall course completion." },
+        "profilePicture": { "type": "string", "description": "URL to the user's profile picture." }
+      },
+      "required": ["userId", "username", "points", "rank", "lastActive"]
+    },
+    "GlobalStats": {
+      "title": "GlobalStats",
+      "description": "Aggregated global statistics for the app.",
+      "type": "object",
+      "properties": {
+        "totalUsers": { "type": "number" },
+        "totalEvents": { "type": "number" },
+        "activeNodes": { "type": "number" },
+        "rankDistribution": { 
+          "type": "object",
+          "description": "Map of rank names to user counts."
+        }
+      },
+      "required": ["totalUsers", "totalEvents", "activeNodes"]
+    },
+    "DailyStats": {
+      "title": "DailyStats",
+      "description": "Statistics for a specific day.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date" },
+        "visits": { "type": "number" },
+        "activeUsers": { "type": "number" }
+      },
+      "required": ["date", "visits", "activeUsers"]
+    },
+    "Presence": {
+      "title": "Presence",
+      "description": "Real-time presence session for a user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "lastSeen": { "type": "string", "format": "date-time" },
+        "sessionId": { "type": "string" }
+      },
+      "required": ["userId", "lastSeen", "sessionId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProgress",
+      "description": "Individual user progress documents."
+    },
+    "/stats/global": {
+      "schema": "GlobalStats",
+      "description": "Global statistics document."
+    },
+    "/dailyStats/{dateStr}": {
+      "schema": "DailyStats",
+      "description": "Daily statistics documents."
+    },
+    "/presence/{sessionId}": {
+      "schema": "Presence",
+      "description": "Real-time presence session documents."
+    }
+  }
+}

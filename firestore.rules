@@ -1,0 +1,89 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId} (Firebase Auth UID)
+    // Fields:
+    //   - userId: string (required) - Unique identifier
+    //   - username: string (required) - Public display name (3-15 chars)
+    //   - points: number (required) - Total points earned
+    //   - rank: string (required) - Current rank
+    //   - streak: number (optional) - Current daily streak
+    //   - badges: list (optional) - List of earned badges
+    //   - completedLessons: list (optional) - IDs of completed lessons
+    //   - lastActive: string (required) - ISO timestamp
+    //   - progress: number (optional) - Completion percentage
+    //   - profilePicture: string (optional) - URL
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['userId', 'username', 'points', 'rank', 'lastActive']) &&
+             data.userId == request.auth.uid &&
+             data.username is string && data.username.size() >= 2 && data.username.size() <= 50 &&
+             data.points is number &&
+             data.rank is string &&
+             data.lastActive is string;
+    }
+
+    match /presence/{sessionId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "ewuzagodwin@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      // Allow authenticated users to see the leaderboard
+      allow read: if isAuthenticated();
+      
+      // Users can only create/update their own profile
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data);
+      
+      // No one can delete profiles except admins
+      allow delete: if isAdmin();
+    }
+
+    match /stats/global {
+      allow read: if isAuthenticated();
+      // In a real app, updates would be done via Cloud Functions or strictly validated
+      allow write: if isAuthenticated();
+    }
+
+    match /dailyStats/{dateStr} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
