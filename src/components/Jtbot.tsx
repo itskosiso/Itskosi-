@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Send, User, Bot, X, RefreshCw, Sparkles } from 'lucide-react';
-import { GoogleGenAI } from "@google/genai";
 import ReactMarkdown from 'react-markdown';
 import { format } from 'date-fns';
 import { cn } from '../lib/utils';
@@ -44,31 +43,33 @@ export function Jtbot({ onClose }: { onClose: () => void }) {
     setIsLoading(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
-      
-      // Convert messages to the format expected by the Chat API
-      // We skip the first bot message as it's the greeting and not part of the history for the model
+      // Convert messages to the format expected by the Gemini Chat API
       const history = messages.slice(1).map(msg => ({
         role: msg.role === 'bot' ? 'model' : 'user',
         parts: [{ text: msg.content }]
       }));
 
-      // Remove the last message from history as it's the one we're sending now
-      const chatHistory = history.slice(0, -1);
-
-      const chat = ai.chats.create({
-        model: "gemini-3-flash-preview",
-        config: {
-          systemInstruction: "You are Jtbot, a friendly and knowledgeable AI assistant for a crypto learning app called Verse. Your goal is to help users understand blockchain, cryptocurrency, and Web3 concepts in a simple, engaging way. Keep responses concise and use markdown for formatting. If asked about the app, explain that Verse is a platform to learn and earn crypto rewards.",
+      const response = await fetch('/api/jtbot/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-        history: chatHistory as any
+        body: JSON.stringify({
+          message: input,
+          history: history
+        }),
       });
 
-      const response = await chat.sendMessage({ message: input });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to get response from Jtbot');
+      }
+
+      const data = await response.json();
 
       const botMessage: Message = {
         role: 'bot',
-        content: response.text || "I'm sorry, I couldn't process that. Please try again.",
+        content: data.text || "I'm sorry, I couldn't process that. Please try again.",
         timestamp: new Date()
       };
 
@@ -79,8 +80,8 @@ export function Jtbot({ onClose }: { onClose: () => void }) {
       let errorMessage = "Oops! I'm having some trouble connecting right now. Please check your internet or try again later.";
       
       // Provide more specific feedback if possible
-      if (error.message?.includes('API_KEY_INVALID') || !process.env.GEMINI_API_KEY) {
-        errorMessage = "Jtbot is currently unavailable due to a configuration issue (API Key). Please contact the administrator.";
+      if (error.message?.includes('API_KEY') || error.message?.includes('configured')) {
+        errorMessage = "Jtbot is currently unavailable due to a server configuration issue. Please contact the administrator.";
       } else if (error.message?.includes('quota')) {
         errorMessage = "I'm a bit overwhelmed with requests right now. Please try again in a minute!";
       }
