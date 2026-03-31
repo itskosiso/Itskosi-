@@ -47,7 +47,6 @@ import { Jtbot } from './components/Jtbot';
 import { 
   auth, 
   db, 
-  signInWithGoogle, 
   signInAsGuest,
   handleFirestoreError, 
   OperationType 
